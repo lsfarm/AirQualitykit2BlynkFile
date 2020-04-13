@@ -4,7 +4,7 @@
 bool firstrunlockout = 0;
 long sendinfo2blynk = 600000;
 long sendalert2blynk = 5000;
-long resendalert2blynk = 720000;
+long resendalert2blynk = 720000;  //720000
 bool sendtoParticle = 0;
 
 /////////************* **********/////////
@@ -59,11 +59,12 @@ time_t t;
 BLYNK_WRITE(V10)
 {
   lowalertsetpoint = param.asInt(); // assigning incoming value from pin to a variable
-  //EEPROM.put(1, lowalertsetpoint);
+  EEPROM.put(1, lowalertsetpoint);
 }
 BLYNK_WRITE(V11)
 {
   highalertsetpoint = param.asInt(); // assigning incoming value from pin to a variable
+  EEPROM.put(50, highalertsetpoint);
 }
 BLYNK_WRITE(V20)
 {
@@ -91,11 +92,12 @@ void setup()
   timer.setInterval(sendalert2blynk, sendAlert);
   timer.setInterval(resendalert2blynk, resetAlert);
   
-  //EEPROM.get(1, lowalertsetpoint);
+  EEPROM.get(1, lowalertsetpoint);
+  EEPROM.get(50, highalertsetpoint);
   Blynk.virtualWrite(V20, alertenable);
   Blynk.virtualWrite(V10, lowalertsetpoint);
   Blynk.virtualWrite(V11, highalertsetpoint);
-  Blynk.notify(String("Device Rebooting... Allow 2 min for sensor readings to settle")); // +  myStr + ("°F"));
+  Blynk.notify(String("Device Rebooting... Allow 1 min for sensor readings to settle")); // +  myStr + ("°F"));
 
 
 
@@ -203,8 +205,8 @@ void sendinfo()
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
       Blynk.virtualWrite(V4, qual);
-      Blynk.virtualWrite(V5, lowalertsetpoint);
-      Blynk.virtualWrite(V6, highalertsetpoint);
+      //Blynk.virtualWrite(V5, lowalertsetpoint);
+      //Blynk.virtualWrite(V6, highalertsetpoint);
 }
 
 void sendAlert()
