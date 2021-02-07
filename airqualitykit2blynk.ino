@@ -1,4 +1,4 @@
-//////******Still publishing to particle in createEventPayload!!!!
+//////******Still publishing to particle in createEventPayload!!!!<<(boron data usage)
 #define SENSOR_READING_INTERVAL 59000
 #define FirstRunDelay 4000
 bool firstrunlockout = 0;
