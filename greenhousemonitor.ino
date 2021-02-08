@@ -13,12 +13,12 @@ V11  - HighAlertSetPoint  EEPROM.put(50
 V12  - LowAlertSetPoint returned to Blynk app (Settings)
 V13  - HighAlertSetPoint returned to Blynk app (Settings)
 */
-
+SYSTEM_THREAD(ENABLED);
 #define Location LS  //location of device
 #define db2p TRUE  //debug2particle   >>if(db2p) {Particle.publish("in db2p");}
 //////******Still publishing to particle in createEventPayload!!!!<<boron data usage
-#define SENSOR_READING_INTERVAL 20000
-#define FirstRunDelay 4000
+#define SENSOR_READING_INTERVAL 30000  //<<< in loop()  sendAlert() relies on this
+#define FirstRunDelay 8000
 bool firstrunlockout = 1;
 long sendinfo2blynk = 60000;
 long sendalert2blynk = 5000;
@@ -54,6 +54,7 @@ void updateDisplay(int temp, int humidity, int pressure, String airQuality);
 
 //#include <Grove_scd30_co2_sensor.h>  //I2C >> 0x61 <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 #include <SparkFun_SCD30_Arduino_Library.h>
+SCD30 airSensor;
 
 #include <Adafruit_BME280.h>   //I2C >> 0x76(default) or 0x77  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 Adafruit_BME280 bme;
@@ -94,18 +95,12 @@ BLYNK_WRITE(V20) {
   digitalWrite(BlynkAlertLED, alertenable);
 }
   
-void setup()
-{
-  //Serial.begin(9600);
+void setup() {
   delay(50);
-  /////////************* **********/////////
-  //             Blynk Timers             //
-  /////////************* **********/////////
   Time.zone(-6);  //-5for old time
   Blynk.begin(auth);
   timer.setInterval(sendinfo2blynk, sendinfo);
   timer.setInterval(sendalert2blynk, sendAlert);
-  //timer.setInterval(resendalert2blynk, resetAlert);  moving this down into sendAlert()
   
   EEPROM.get(1, lowalertsetpoint);
   EEPROM.get(50, highalertsetpoint);
@@ -118,10 +113,10 @@ void setup()
   // Configure the dust sensor pin as an input
   pinMode(DUST_SENSOR_PIN, INPUT);
   if (aqSensor.init()) {
-    if(db2p) Particle.publish("AirQuality", "Ready");
+    if(db2p && Particle.connected()) Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK);
   }
   else {
-    if(db2p) Particle.publish("AirQuality", "Error");
+    if(db2p) Particle.publish("DustSen", "Error"); delay(1000);
   }
 
   Wire.begin();
@@ -139,11 +134,23 @@ void setup()
   SeeedOled.putString("Monitor");
 
   if (bme.begin()) {
-    if(db2p) Particle.publish("BME280", "Ready");
+    if(db2p) Particle.publish("BME280", "Ready", PRIVATE | WITH_ACK); delay(1000);
   }
   else {
-    if(db2p) Particle.publish("BME280", "Error");
+    if(db2p) Particle.publish("BME280", "Error"); delay(1000);
   }
+  
+  if (airSensor.begin()) {
+    if(db2p) Particle.publish("SCD30", "Ready"); delay(1000);
+  }
+  else {
+    if(db2p) Particle.publish("SCD30", "Error"); delay(1000);
+  }
+  airSensor.setMeasurementInterval(8); //Change number of seconds between measurements: 2 to 1800 (30 minutes)
+  //My desk is ~1600m above sealevel
+  //airSensor.setAltitudeCompensation(1600); //Set altitude of the sensor in m
+  //Pressure in Boulder, CO is 24.65inHg or 834.74mBar
+  //airSensor.setAmbientPressure(835); //Current ambient pressure in mBar: 700 to 1200
 
   lastInterval = millis();
 }
@@ -160,27 +167,40 @@ void loop()
   if ((millis() - lastInterval) > SENSOR_READING_INTERVAL) {
     String quality = getAirQuality();
     //Serial.printlnf("Air Quality: %s", quality.c_str());
-
     getBMEValues(temp, pressure, humidity);
     //Serial.printlnf("Temp: %d", temp);
     //Serial.printlnf("Pressure: %d", pressure);
     //Serial.printlnf("Humidity: %d", humidity);
-
     getDustSensorReadings();
-
     updateDisplay(temp, humidity, pressure, quality);
-
     createEventPayload(temp, humidity, pressure, quality);
-
     lowpulseoccupancy = 0;
     lastInterval = millis();
+    
+    if (airSensor.dataAvailable()) { //SCD30 data
+    String SCD_CO2;
+    String SCD_Temp;
+    String SCD_Hum;
+    SCD_CO2 = String(airSensor.getCO2());
+    SCD_Temp = String(airSensor.getTemperature(), 1);
+    SCD_Hum = String(airSensor.getHumidity(), 1);
+    Particle.publish("SCD30/readings", String("CO2:") + SCD_CO2 + (" Temp:") + SCD_Temp + (" Hum:") + SCD_Hum);
+    
+    //Particle.publish("co2(ppm):");
+    //Particle.publish(" temp(C):");
+    //Particle.publish(airSensor.getTemperature(), 1);
+
+    //Particle.publish(" humidity(%):");
+    //Particle.publish(airSensor.getHumidity(), 1);
+  }
+  else Particle.publish("SCD30", "Error in loop()");
   }
   
   if (millis() - lastSync > ONE_DAY_MILLIS) {
         Particle.syncTime();
         lastSync = millis();
     }
-}
+} //end loop
   
 void firstrun() {
     if (millis() > FirstRunDelay && firstrunlockout == 0) {
@@ -191,6 +211,7 @@ void firstrun() {
 }
 
 void sendinfo() {
+      getBMEValues(temp, pressure, humidity); //get current readings
       Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
       Blynk.virtualWrite(V1, temp);
       Blynk.virtualWrite(V2, humidity);
@@ -203,7 +224,7 @@ void sendAlert() {
         if(temp < lowalertsetpoint) {
             String myStr;
             myStr = String(temp);
-            Blynk.notify(String("Low Temp Alert! ") +  myStr + ("°F"));
+            Blynk.notify(String("Low Temp Alert-") + /*("Location") +*/  myStr + ("°F"));
             Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
