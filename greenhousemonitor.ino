@@ -38,7 +38,8 @@ bool sendtoParticle = 0;
 /////////************* **********/////////
 bool BME280Status; //these are set automaticlly
 bool SCD30Status;
-bool DustSenStatus;
+bool AirQUStatus;
+bool DustSenStatus = 1;
 bool SeeedOledStatus = 0; //this one needs set
 int switchdb2p(String command); //particle function
 int wifiSTR = 99; //strength
@@ -87,7 +88,8 @@ void createEventPayload(int temp, int humidity, int pressure, String airQuality)
 #define AQS_PIN A2            //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 String getAirQuality();
 AirQualitySensor aqSensor(AQS_PIN);
-String qual;
+String qual; 
+String airQuality;
 
 #define DUST_SENSOR_PIN D4    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 void getDustSensorReadings();
@@ -120,12 +122,12 @@ void sensorInit() {
   pinMode(DUST_SENSOR_PIN, INPUT);
   if (aqSensor.init()) {
       //publishQueue.publish("DustSen", "Ready", PRIVATE | WITH_ACK);
-    if(db2p) Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(1000); //if(db2p && Particle.connected()) {bool result = Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(4000);}
-    DustSenStatus = 1;
+    if(db2p) Particle.publish("AirQUSen", "Ready", PRIVATE | WITH_ACK); delay(1000); //if(db2p && Particle.connected()) {bool result = Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(4000);}
+    AirQUStatus = 1;
   }
   else {
-    if(db2p) Particle.publish("DustSen", "Error"); delay(1000);
-    DustSenStatus = 0;
+    if(db2p) Particle.publish("AirQUSen", "Error"); delay(1000);
+    AirQUStatus = 0;
   }
   if (bme.begin()) { //BME280
       //publishQueue.publish("BME280", "Ready", PRIVATE | WITH_ACK);
@@ -152,6 +154,7 @@ void sensorInit() {
   //Pressure in Boulder, CO is 24.65inHg or 834.74mBar
   //airSensor.setAmbientPressure(835); //Current ambient pressure in mBar: 700 to 1200
     if(SeeedOledStatus) { // this needs to be set above this isn't working >> (SeeedOled.init()) {
+        SeeedOled.init();
         SeeedOled.clearDisplay();
         SeeedOled.setNormalDisplay();
         SeeedOled.setPageMode();
@@ -198,7 +201,6 @@ void setup() {
     Particle.variable("BME280Ready", BME280Status);
     Particle.variable("SCD30Ready", SCD30Status);
 
-    
     Wire.begin();
     sensorInit();
     
@@ -249,16 +251,15 @@ void firstrun() {
 }
 void updateAllSensors() {
     getSignalStrength();
-    getBMEValues(temp, pressure, humidity);
-    getSCDValues(tempSCD30, humiditySCD30, CO2SCD30);
-    getDustSensorReadings(); 
-    lowpulseoccupancy = 0;
+    if(BME280Status) getBMEValues(temp, pressure, humidity);
+    if(SCD30Status) getSCDValues(tempSCD30, humiditySCD30, CO2SCD30);
+    if(AirQUStatus) airQuality = getAirQuality(); //<<< move this out of BME280 stuff
+    if(DustSenStatus) getDustSensorReadings(); lowpulseoccupancy = 0;
 }
 
 void sendinfo() {
       // this nesicary? getBMEValues(temp, pressure, humidity); //get current readings
-      String quality = getAirQuality(); //<<< move this out of BME280 stuff
-      if(db2p) createEventPayload(temp, humidity, pressure, quality); // with BME280 sensor
+      if(db2p) createEventPayload(temp, humidity, pressure, airQuality); // with BME280 sensor
       if(db2p) createSCD30Payload(tempSCD30, humiditySCD30, CO2SCD30);
       Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
       Blynk.virtualWrite(V1, temp);
@@ -306,6 +307,18 @@ int getSCDValues(int &tempSCD30, int &humiditySCD30, int &CO2SCD30) {
     }
     else { Particle.publish("SCD30/debug", "Error in getSCDValues()"); return -1; }
 }
+int getBMEValues(int &temp, int &pressure, int &humidity) {
+    if(db2p) {  //if(temp < 0) Particle.publish("BME280/debug", "Error in getBMEValues()");
+        int testBME = bme.readTemperature();
+        if(testBME == 0) { BME280Status = 0; String mySTR = String(testBME); Particle.publish("BME280/debug/unplugged", mySTR, PRIVATE); }
+        if(testBME != 0) BME280Status = 1;
+    }
+    temp = (int)(bme.readTemperature() * 1.8F + 32); //convert temp to fahrenheit
+    pressure = (int)(bme.readPressure() / 100.0F);
+    humidity = (int)bme.readHumidity();
+
+  return 1;
+}
 String getAirQuality() {
   int quality = aqSensor.slope();
   qual = "None";
@@ -328,18 +341,6 @@ String getAirQuality() {
   }
 
   return qual;
-}
-int getBMEValues(int &temp, int &pressure, int &humidity) {
-    if(db2p) {  //if(temp < 0) Particle.publish("BME280/debug", "Error in getBMEValues()");
-        int testBME = bme.readTemperature();
-        if(testBME == 0) { BME280Status = 0; String mySTR = String(testBME); Particle.publish("BME280/debug/unplugged", mySTR, PRIVATE); }
-        if(testBME != 0) BME280Status = 1;
-    }
-    temp = (int)(bme.readTemperature() * 1.8F + 32); //convert temp to fahrenheit
-    pressure = (int)(bme.readPressure() / 100.0F);
-    humidity = (int)bme.readHumidity();
-
-  return 1;
 }
 void getDustSensorReadings() {
   // This particular dust sensor returns 0s often, so let's filter them out by making sure we only
