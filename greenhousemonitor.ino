@@ -12,40 +12,44 @@ V0   -Blynk.virtualWrite(V0, Time.format(Time.local(), "%r - %a %D"));
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
       Blynk.virtualWrite(V4, qual);
-V5   - Terminal Widget
+      Blynk.virtualWrite(V5, wifiSTR;
+V8   - Terminal Widget
+V9   - pwLED Widget //if power at USB
 V10  - LowAlertSetPoint   EEPROM.put(1
 V11  - HighAlertSetPoint  EEPROM.put(50
 V12  - LowAlertSetPoint returned to Blynk app (Settings)
 V13  - HighAlertSetPoint returned to Blynk app (Settings)
+V20  - Temp alert disable button bool alertenable
 */
 SYSTEM_THREAD(ENABLED);
 #define Location LS  //location of device
-#define db2p TRUE  //debug2particle   >>if(db2p) {Particle.publish("in db2p");}
+bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");}
 //////******Still publishing to particle in createEventPayload!!!!<<boron data usage
-#define SENSOR_READING_INTERVAL 30  //<<< in loop()  sendAlert() relies on this 30 = 3 sec.
+#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec.
 #define FirstRunDelay 8000
 bool firstrunlockout = 1;
 long sendinfo2blynk = 60000;
-long sendalert2blynk = 5000;
+long sendalert2blynk = 20000; //if less than udpateAllSensors() blynk will alert on reboot
 long resendalert2blynk = 720000;  //720000 12min.
 bool sendtoParticle = 0;
 
 /////////************* **********/////////
 //                Variables             //
 /////////************* **********/////////
-bool BME280Status;
+bool BME280Status; //these are set automaticlly
 bool SCD30Status;
-//bool BME280Status;
+bool DustSenStatus;
+bool SeeedOledStatus = 0; //this one needs set
+int switchdb2p(String command); //particle function
+int wifiSTR = 99; //strength
+int wifiQUA = 99; //quality
 #include <blynk.h>
 bool ReCnctFlag = 0;
 int ReCnctCount;
-WidgetTerminal terminal(V5);
+WidgetTerminal terminal(V8);
 //char auth[] = "Mi23GHp-MVumIsjfunxSQT_WxnutVvs1";  //Red Barn Greenhouse in Blynk
 //#if ("LS")
 char auth[] = "PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; //HomeAir in Blynk
-//#endif
-//char auth[] = "ETkv5bSL15G5a_mhlcpQCPog4MqGm_R8";  //IDGreenhouse in Blynk
-//char auth[] = "L3TJ_dNNlXRNDT-CcQWRhRIsRxicAyIc";
 #define BlynkAlertLED D7    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 bool LEDstatus = 0;
 
@@ -56,6 +60,10 @@ bool havealerted = 0;
 bool alertenable = 1;
 int lowalertsetpoint = 60;  //RedBarn 60   IDGreenhouse 50
 int highalertsetpoint = 105;  //RedBarn 105  IDGreenhouse 90
+/**** PowerMonitoring *************************************************************************************************************/
+bool hasVUSB(); 
+bool hadVUSB = false;
+WidgetLED pwLED(V9); //in Blynk
 
 #include <JsonParserGeneratorRK.h>
 
@@ -65,11 +73,15 @@ void updateDisplay(int temp, int humidity, int pressure, String airQuality);
 //#include <Grove_scd30_co2_sensor.h>  //I2C >> 0x61 <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 #include <SparkFun_SCD30_Arduino_Library.h>
 SCD30 airSensor;
+int tempSCD30, humiditySCD30, CO2SCD30;
+int getSCDValues(int &tempSCD30, int &humiditySCD30, int &CO2SCD30);
+void createSCD30Payload(int tempSCD30, int humiditySCD30, int CO2SCD30);
 
 #include <Adafruit_BME280.h>   //I2C >> 0x76(default) or 0x77  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 Adafruit_BME280 bme;
 int temp, pressure, humidity;
 int getBMEValues(int &temp, int &humidity, int &pressure);
+void createEventPayload(int temp, int humidity, int pressure, String airQuality);
 
 #include <Grove_Air_quality_Sensor.h>
 #define AQS_PIN A2            //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -85,8 +97,6 @@ unsigned long last_lpo = 0;
 unsigned long duration;
 float ratio = 0;
 float concentration = 0;
-
-void createEventPayload(int temp, int humidity, int pressure, String airQuality);
 ////////**********Time***********/////////
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 unsigned long lastSync = millis();
@@ -111,9 +121,11 @@ void sensorInit() {
   if (aqSensor.init()) {
       //publishQueue.publish("DustSen", "Ready", PRIVATE | WITH_ACK);
     if(db2p) Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(1000); //if(db2p && Particle.connected()) {bool result = Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(4000);}
+    DustSenStatus = 1;
   }
   else {
     if(db2p) Particle.publish("DustSen", "Error"); delay(1000);
+    DustSenStatus = 0;
   }
   if (bme.begin()) { //BME280
       //publishQueue.publish("BME280", "Ready", PRIVATE | WITH_ACK);
@@ -139,8 +151,23 @@ void sensorInit() {
   //airSensor.setAltitudeCompensation(1600); //Set altitude of the sensor in m
   //Pressure in Boulder, CO is 24.65inHg or 834.74mBar
   //airSensor.setAmbientPressure(835); //Current ambient pressure in mBar: 700 to 1200
-
-
+    if(SeeedOledStatus) { // this needs to be set above this isn't working >> (SeeedOled.init()) {
+        SeeedOled.clearDisplay();
+        SeeedOled.setNormalDisplay();
+        SeeedOled.setPageMode();
+        SeeedOled.setTextXY(2, 0);
+        SeeedOled.putString("Particle");
+        SeeedOled.setTextXY(3, 0);
+        SeeedOled.putString("Air Quality");
+        SeeedOled.setTextXY(4, 0);
+        SeeedOled.putString("Monitor");
+        if(db2p) Particle.publish("SeeedOled", "Ready", PRIVATE | WITH_ACK); delay(1000);
+        SeeedOledStatus = 1;
+    }
+    else {
+        if(db2p) Particle.publish("SeeedOled", "Error"); delay(1000);
+        SeeedOledStatus = 0; 
+    }
 }
   
 void setup() {
@@ -149,8 +176,9 @@ void setup() {
     delay(50);
     Time.zone(-6);  //-5for old time
     Blynk.begin(auth);
+    pwLED.off();
     //sensorInit();
-    timer.setInterval(30000L, updateAllSensors);
+    timer.setInterval(30020L, updateAllSensors); //sendAlert() relies on this
     timer.setInterval(sendinfo2blynk, sendinfo);
     timer.setInterval(sendalert2blynk, sendAlert);
   
@@ -162,28 +190,24 @@ void setup() {
     Blynk.notify(String("Device Rebooting... Allow 1 min for sensor readings to settle")); // +  myStr + ("°F"));
     pinMode(BlynkAlertLED, OUTPUT);
     
+    Particle.function("Debug2Particle", switchdb2p);
+    Particle.variable("Debug2Particle", db2p);
+    Particle.variable("WifiStrength", wifiSTR);
+    Particle.variable("WifiQuaility", wifiQUA);
+    Particle.variable("USBPower", hasVUSB);
     Particle.variable("BME280Ready", BME280Status);
     Particle.variable("SCD30Ready", SCD30Status);
+
     
     Wire.begin();
     sensorInit();
     
-    //Wire.begin();
-    SeeedOled.init();
-    SeeedOled.clearDisplay();
-    SeeedOled.setNormalDisplay();
-    SeeedOled.setPageMode();
-    SeeedOled.setTextXY(2, 0);
-    SeeedOled.putString("Particle");
-    SeeedOled.setTextXY(3, 0);
-    SeeedOled.putString("Air Quality");
-    SeeedOled.setTextXY(4, 0);
-    SeeedOled.putString("Monitor");
-  
     lastInterval = millis();
 }
 
 void loop() {
+    bool curVUSB = hasVUSB();
+    if (curVUSB != hadVUSB) { hadVUSB = curVUSB;  if(curVUSB) {pwLED.on(); /*powerRegain();*/}   else{pwLED.off(); /*powerFail();*/}   }
     if (Blynk.connected()) {  // If connected run as normal
         Blynk.run();
     } else if (ReCnctFlag == 0) {
@@ -215,7 +239,7 @@ void loop() {
         lastSync = millis();
     }
 } //end loop
-  
+
 void firstrun() {
     if (millis() > FirstRunDelay && firstrunlockout == 0) {
         getBMEValues(temp, pressure, humidity);
@@ -224,23 +248,24 @@ void firstrun() {
     }
 }
 void updateAllSensors() {
-    String quality = getAirQuality();
-    //createEventPayload(temp, humidity, pressure, quality);
+    getSignalStrength();
     getBMEValues(temp, pressure, humidity);
-    getSCD30values();
+    getSCDValues(tempSCD30, humiditySCD30, CO2SCD30);
     getDustSensorReadings(); 
     lowpulseoccupancy = 0;
 }
 
 void sendinfo() {
-      getBMEValues(temp, pressure, humidity); //get current readings
+      // this nesicary? getBMEValues(temp, pressure, humidity); //get current readings
       String quality = getAirQuality(); //<<< move this out of BME280 stuff
-      if(db2p) createEventPayload(temp, humidity, pressure, quality);
+      if(db2p) createEventPayload(temp, humidity, pressure, quality); // with BME280 sensor
+      if(db2p) createSCD30Payload(tempSCD30, humiditySCD30, CO2SCD30);
       Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
       Blynk.virtualWrite(V1, temp);
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
       Blynk.virtualWrite(V4, qual);
+      Blynk.virtualWrite(V5, wifiSTR);
 }
 
 void sendAlert() {
@@ -272,19 +297,14 @@ void resetAlert() {
 /////////************* **********/////////
 //           Sensor Functions           //
 /////////************* **********/////////
-void getSCD30values() {
+int getSCDValues(int &tempSCD30, int &humiditySCD30, int &CO2SCD30) {
     if (airSensor.dataAvailable()) { //SCD30 data
-        String SCD_CO2;
-        String SCD_Temp;
-        String SCD_Hum;
-        SCD_CO2 = String(airSensor.getCO2());
-        int val = (airSensor.getTemperature(), 1);
-        val = val * 1.8F + 32;  //<<<<<<<<<<<<<this isn't right
-        SCD_Temp = String(val);
-        SCD_Hum = String(airSensor.getHumidity(), 1);
-        Particle.publish("SCD30/readings", String(Time.format("%r - %D ")) + ("CO2: ") + SCD_CO2 + (" Temp: ") + SCD_Temp + (" Hum: ") + SCD_Hum, PRIVATE | WITH_ACK);
+        tempSCD30 = (airSensor.getTemperature() * 1.8F + 32); //, 1);
+        humiditySCD30 = airSensor.getHumidity(); //, 1);
+        CO2SCD30 = airSensor.getCO2();
+        return 1;
     }
-    else Particle.publish("SCD30/readings", "Error in updateAllSensors()");
+    else { Particle.publish("SCD30/debug", "Error in getSCDValues()"); return -1; }
 }
 String getAirQuality() {
   int quality = aqSensor.slope();
@@ -309,15 +329,18 @@ String getAirQuality() {
 
   return qual;
 }
-
 int getBMEValues(int &temp, int &pressure, int &humidity) {
-  temp = (int)(bme.readTemperature() * 1.8F + 32); //convert temp to fahrenheit
-  pressure = (int)(bme.readPressure() / 100.0F);
-  humidity = (int)bme.readHumidity();
+    if(db2p) {  //if(temp < 0) Particle.publish("BME280/debug", "Error in getBMEValues()");
+        int testBME = bme.readTemperature();
+        if(testBME == 0) { BME280Status = 0; String mySTR = String(testBME); Particle.publish("BME280/debug/unplugged", mySTR, PRIVATE); }
+        if(testBME != 0) BME280Status = 1;
+    }
+    temp = (int)(bme.readTemperature() * 1.8F + 32); //convert temp to fahrenheit
+    pressure = (int)(bme.readPressure() / 100.0F);
+    humidity = (int)bme.readHumidity();
 
   return 1;
 }
-
 void getDustSensorReadings() {
   // This particular dust sensor returns 0s often, so let's filter them out by making sure we only
   // capture and use non-zero LPO values for our calculations once we get a good reading.
@@ -336,24 +359,32 @@ void getDustSensorReadings() {
   Serial.printlnf("Concentration: %f pcs/L", concentration);
 }
 
-void createEventPayload(int temp, int humidity, int pressure, String airQuality) {
-  JsonWriterStatic<256> jw;
-  {
-    JsonWriterAutoObject obj(&jw);
-
-    jw.insertKeyValue("temp", temp);
-    jw.insertKeyValue("humidity", humidity);
-    jw.insertKeyValue("pressure", pressure);
-    jw.insertKeyValue("air-quality", airQuality);
-
-    if (lowpulseoccupancy > 0)
-    {
-      jw.insertKeyValue("dust-lpo", lowpulseoccupancy);
-      jw.insertKeyValue("dust-ratio", ratio);
-      jw.insertKeyValue("dust-concentration", concentration);
+void createSCD30Payload(int tempSCD30, int humiditySCD30, int CO2SCD30){
+    JsonWriterStatic<256> jw; {
+        JsonWriterAutoObject obj(&jw);
+        
+        jw.insertKeyValue("Temp", tempSCD30);
+        jw.insertKeyValue("Humidity", humiditySCD30);
+        jw.insertKeyValue("CO2", CO2SCD30);
     }
+    Particle.publish("SCD30/readings", jw.getBuffer(), PRIVATE);
+}
+void createEventPayload(int temp, int humidity, int pressure, String airQuality) {
+    JsonWriterStatic<256> jw; {
+        JsonWriterAutoObject obj(&jw);
+
+        jw.insertKeyValue("temp", temp);
+        jw.insertKeyValue("humidity", humidity);
+        jw.insertKeyValue("pressure", pressure);
+        jw.insertKeyValue("air-quality", airQuality);
+
+        if (lowpulseoccupancy > 0) {
+            jw.insertKeyValue("dust-lpo", lowpulseoccupancy);
+            jw.insertKeyValue("dust-ratio", ratio);
+            jw.insertKeyValue("dust-concentration", concentration);
+        }
   }
-  /*if(db2p)*/ Particle.publish("BME280/readings", jw.getBuffer(), PRIVATE);
+  Particle.publish("BME280/readings", jw.getBuffer(), PRIVATE);
 
 }
 
@@ -385,4 +416,25 @@ void updateDisplay(int temp, int humidity, int pressure, String airQuality) {
     SeeedOled.putNumber(concentration); // Will cast our float to an int to make it more compact
     SeeedOled.putString(" pcs/L");
   }
+}
+
+int switchdb2p(String command) {
+    if(command == "1") {
+        db2p = 1;
+        return 1;
+    }
+    else if (command == "0") {
+        db2p = 0;
+        return 0;
+    }
+    else return -1;
+} 
+void getSignalStrength() {
+    wifiSTR = WiFi.RSSI().getStrength();
+    wifiQUA = WiFi.RSSI().getQualityValue();
+}
+bool hasVUSB() { //checks if power supplied at USB this runs in loop() - bool curVUSB = hasVUSB(); 
+    uint32_t *pReg = (uint32_t *)0x40000438; // USBREGSTATUS
+
+    return (*pReg & 1) != 0;
 }
