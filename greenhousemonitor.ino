@@ -1,56 +1,56 @@
-// This #include statement was automatically added by the Particle IDE.
-//#include <PublishQueueAsyncRK.h>  //https://github.com/rickkas7/PublishQueueAsyncRK
-//retained uint8_t publishQueueRetainedBuffer[2048];
-//PublishQueueAsync publishQueue(publishQueueRetainedBuffer, sizeof(publishQueueRetainedBuffer));
-
 /////////************* **********/////////
 //          Blynk Assignments           //
 /////////************* **********/////////
 /*
-V0   -Blynk.virtualWrite(V0, Time.format(Time.local(), "%r - %a %D"));
+V0    Blynk.virtualWrite(V0, Time.format(Time.local(), "%r - %a %D"));
       Blynk.virtualWrite(V1, temp);
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
       Blynk.virtualWrite(V4, qual);
-      Blynk.virtualWrite(V5, wifiSTR;
+V5    Blynk.virtualWrite(V5, wifiSTR;
 V8   - Terminal Widget
 V9   - pwLED Widget //if power at USB
 V10  - LowAlertSetPoint   EEPROM.put(1
 V11  - HighAlertSetPoint  EEPROM.put(50
 V12  - LowAlertSetPoint returned to Blynk app (Settings)
 V13  - HighAlertSetPoint returned to Blynk app (Settings)
-V20  - Temp alert disable button bool alertenable
-*/
+V20  - Temp alert disable button bool alertenable */
+/////////************* **********/////////
+//         Global Variables             //
+/////////************* **********/////////
 SYSTEM_THREAD(ENABLED);
-String Location = "HomeAir";  //location of device
-bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");}
-//////******Still publishing to particle in createEventPayload!!!!<<boron data usage
-#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec.
-#define FirstRunDelay 12000
+#define Outside  //location of device
+/**** Device Settings****************************************************************************************************************/
+#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec. to discontinue this  using BlynkTimer now
+//#define FirstRunDelay 12000
+long updateSensors = 30020L;
+long sendInfo2Blynk = 60000L;
+long sendAlert2Blynk = 4000L; //if less than udpateAllSensors() blynk will alert on reboot << fixing this
+long resendAlert2Blynk = 720000L;  //720000 12min.
 bool firstrunlockout = 0;
-long sendinfo2blynk = 60000;
-long sendalert2blynk = 4000; //if less than udpateAllSensors() blynk will alert on reboot
-long resendalert2blynk = 720000;  //720000 12min.
-//bool sendtoParticle = 0;
-
-/////////************* **********/////////
-//                Variables             //
-/////////************* **********/////////
-bool BME280Status; //these are set automaticlly
-bool SCD30Status;
-bool AirQUStatus;
-bool DustSenStatus = 1;
-bool SeeedOledStatus = 0; //this one needs set
+/**** Particle *********************************************************************************************************************/
+bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");} set this to false when statified with performance to disable sending if rebooted
 int switchdb2p(String command); //particle function
 int wifiSTR = 99; //strength
 int wifiQUA = 99; //quality
+/**** Blynk ************************************************************************************************************************/
 #include <blynk.h>
 bool ReCnctFlag = 0;
 int ReCnctCount;
 WidgetTerminal terminal(V8);
 //char auth[] = "Mi23GHp-MVumIsjfunxSQT_WxnutVvs1";  //Red Barn Greenhouse in Blynk
-//#if ("LS")
+#ifdef HomeAir
 char auth[] = "PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; //HomeAir in Blynk
+String Location = "HomeAir";
+#endif
+#ifdef Inside
+char auth[] = "OZ4chJK2VV5yEcau0yBvOjSe_j4NsKQz"; //HomeAir in Blynk
+String Location = "2Inside";
+#endif
+#ifdef Outside
+char auth[] = "lSdwwyuIRok009bwgik-PM6keQWtTlJ0"; //HomeAir in Blynk
+String Location = "4Outside";
+#endif
 #define BlynkAlertLED D7    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 bool LEDstatus = 0;
 BlynkTimer timer;
@@ -67,24 +67,28 @@ WidgetLED pwLED(V9); //in Blynk
 String batVolt;
 
 #include <JsonParserGeneratorRK.h>
-
+/**** Sensors *********************************************************************************************************************/
 #include <OLED_Display_128X64.h>
+bool SeeedOledStatus = 0; //set manually
 void updateDisplay(int temp, int humidity, int pressure, String airQuality);
 
 //#include <Grove_scd30_co2_sensor.h>  //I2C >> 0x61 <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 #include <SparkFun_SCD30_Arduino_Library.h>
+bool SCD30Status;  //set automaticlly
 SCD30 airSensor;
 int tempSCD30, humiditySCD30, CO2SCD30;
 int getSCDValues(int &tempSCD30, int &humiditySCD30, int &CO2SCD30);
 void createSCD30Payload(int tempSCD30, int humiditySCD30, int CO2SCD30);
 
 #include <Adafruit_BME280.h>   //I2C >> 0x76(default) or 0x77  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+bool BME280Status; //set automaticlly
 Adafruit_BME280 bme;
 int temp, pressure, humidity;
 int getBMEValues(int &temp, int &humidity, int &pressure);
 void createEventPayload(int temp, int humidity, int pressure, String airQuality);
 
 #include <Grove_Air_quality_Sensor.h>
+bool AirQUStatus;  //set automaticlly
 #define AQS_PIN A2            //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 String getAirQuality();
 AirQualitySensor aqSensor(AQS_PIN);
@@ -92,6 +96,7 @@ String qual;
 String airQuality;
 
 #define DUST_SENSOR_PIN D4    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+bool DustSenStatus = 0;  //set manually
 void getDustSensorReadings();
 unsigned long lastInterval;
 unsigned long lowpulseoccupancy = 0;
@@ -99,7 +104,7 @@ unsigned long last_lpo = 0;
 unsigned long duration;
 float ratio = 0;
 float concentration = 0;
-////////**********Time***********/////////
+/****Time***********************************************************************************************************************/
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 unsigned long lastSync = millis();
 time_t t;
@@ -114,24 +119,23 @@ BLYNK_WRITE(V11) {
 }
 BLYNK_WRITE(V20) {
   alertenable = param.asInt(); // assigning incoming value from pin to a variable
-  digitalWrite(BlynkAlertLED, alertenable);
+  digitalWrite(BlynkAlertLED, alertenable); //turn on D7 blue LED if alert On
 }
 
 
   
 void setup() {
-    //delay(5000);
     //sensorInit();
     delay(50);
     Time.zone(-6);  //-5for old time
     Blynk.begin(auth);
     pwLED.off();
     //sensorInit();
-    timer.setInterval(30020L, updateAllSensors); //sendAlert() relies on this
-    timer.setInterval(sendinfo2blynk, sendinfo);
-    timer.setInterval(sendalert2blynk, sendAlert);
+    timer.setInterval(updateSensors, updateAllSensors); //sendAlert() relies on this
+    timer.setInterval(sendInfo2Blynk, sendinfo);
+    timer.setInterval(sendAlert2Blynk, sendAlert);
   
-    EEPROM.get(1, lowalertsetpoint);
+    EEPROM.get(1, lowalertsetpoint); //since firmware 2.0 this pops to -1 on fresh device instead of set from above
     EEPROM.get(50, highalertsetpoint);
     Blynk.virtualWrite(V20, alertenable);
     Blynk.virtualWrite(V10, lowalertsetpoint);
@@ -218,7 +222,7 @@ void sendAlert() {
             Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
-            if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendalert2blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
+            if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendAlert2Blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
         }
         if(temp > highalertsetpoint) {
             String myStr = String(temp);
@@ -226,13 +230,10 @@ void sendAlert() {
             Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
-            if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendalert2blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
+            if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendAlert2Blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
         }
     }
 }
-/*void resetAlert() {
-    havealerted = 0;
-}*/
 /////////************* **********/////////
 //           Sensor Functions           //
 /////////************* **********/////////
@@ -435,7 +436,7 @@ bool hasVUSB() { //checks if power supplied at USB this runs in loop() - bool cu
 
 void getPowerInfo() {
     float voltage = analogRead(BATT) * 0.0011224;
-    batVolt = "Voltage=%.1f", voltage;
+    batVolt = String(voltage, 3); //sprintf("Voltage=%.1f", voltage);
 	char buf[128];
 	snprintf(buf, sizeof(buf), "voltage=%.1f PWR=%d CHG=%d", voltage, digitalRead(PWR), digitalRead(CHG));
     if(db2p) Particle.publish("PowerInfo", buf, PRIVATE);
