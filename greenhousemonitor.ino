@@ -18,21 +18,23 @@ V20  - Temp alert disable button bool alertenable */
 /////////************* **********/////////
 //         Global Variables             //
 /////////************* **********/////////
-SYSTEM_THREAD(ENABLED);
-#define Outside  //location of device
+SYSTEM_THREAD(ENABLED); //resaon for this??
+#define RedBarnTexline  //location of device
 /**** Device Settings****************************************************************************************************************/
-#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec. to discontinue this  using BlynkTimer now
+//#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec. to discontinue this  using BlynkTimer now
 //#define FirstRunDelay 12000
-long updateSensors = 30020L;
-long sendInfo2Blynk = 60000L;
-long sendAlert2Blynk = 4000L; //if less than udpateAllSensors() blynk will alert on reboot << fixing this
-long resendAlert2Blynk = 720000L;  //720000 12min.
-bool firstrunlockout = 0;
+long updateSensors      = 30000L;
+// moved to ifdef  long sendInfo2Blynk     = 60000L;
+long sendAlert2Blynk    = 4000L; //if less than udpateAllSensors() blynk will alert on reboot << fixing this -Fixed??
+long resendAlert2Blynk  = 720000L;  //720000 12min.
+bool firstrunlockout    = 0;
+int  timeUpdateDay      = 0;
+int  runDayCounter      = 0;
 /**** Particle *********************************************************************************************************************/
-bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");} set this to false when statified with performance to disable sending if rebooted
+//moved to if def bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");} set this to false when statified with performance to disable sending if rebooted
 int switchdb2p(String command); //particle function
-int wifiSTR = 99; //strength
-int wifiQUA = 99; //quality
+int SIG_STR = 99; //strength
+int SIG_QUA = 99; //quality
 /**** Blynk ************************************************************************************************************************/
 #include <blynk.h>
 bool ReCnctFlag = 0;
@@ -40,16 +42,34 @@ int ReCnctCount;
 WidgetTerminal terminal(V8);
 //char auth[] = "Mi23GHp-MVumIsjfunxSQT_WxnutVvs1";  //Red Barn Greenhouse in Blynk
 #ifdef HomeAir
-char auth[] = "PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; //HomeAir in Blynk
+char auth[] = "PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; 
 String Location = "HomeAir";
+long sendInfo2Blynk     = 60000L;
+bool db2p = TRUE;
 #endif
 #ifdef Inside
-char auth[] = "OZ4chJK2VV5yEcau0yBvOjSe_j4NsKQz"; //HomeAir in Blynk
+char auth[] = "OZ4chJK2VV5yEcau0yBvOjSe_j4NsKQz"; 
 String Location = "2Inside";
+long sendInfo2Blynk     = 60000L;
+bool db2p = TRUE;
 #endif
-#ifdef Outside
-char auth[] = "lSdwwyuIRok009bwgik-PM6keQWtTlJ0"; //HomeAir in Blynk
-String Location = "4Outside";
+#ifdef RedBarnNorth
+char auth[] = "CcXWiH1qYe6ACneKvrXitZ_KC56Fbj5W"; 
+String Location = "Red Barn North";
+long sendInfo2Blynk     = 60000L;
+bool db2p = TRUE;
+#endif
+#ifdef RedBarnMain
+char auth[] = "ODmy4ksmya1Ttw_-tlv93FXaheZTdiph";
+String Location = "Red Barn Main";
+long sendInfo2Blynk     = 60000L;
+bool db2p = TRUE;
+#endif
+#ifdef RedBarnTexline
+char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; 
+String Location = "Red Barn Texline";
+long sendInfo2Blynk     = 600000L;
+bool db2p = FALSE;
 #endif
 #define BlynkAlertLED D7    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 bool LEDstatus = 0;
@@ -96,7 +116,7 @@ String qual;
 String airQuality;
 
 #define DUST_SENSOR_PIN D4    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-bool DustSenStatus = 0;  //set manually
+bool DustSenStatus = 0;  //set manually !!fix sensor reading interval before re-enabling this
 void getDustSensorReadings();
 unsigned long lastInterval;
 unsigned long lowpulseoccupancy = 0;
@@ -127,13 +147,13 @@ BLYNK_WRITE(V20) {
 void setup() {
     //sensorInit();
     delay(50);
-    Time.zone(-6);  //-5for old time
+    setZone(); //Time.zone(-6);  //-5for old time
     Blynk.begin(auth);
     pwLED.off();
     //sensorInit();
     timer.setInterval(updateSensors, updateAllSensors); //sendAlert() relies on this
     timer.setInterval(sendInfo2Blynk, sendinfo);
-    timer.setInterval(sendAlert2Blynk, sendAlert);
+    // try this in firstRun() to get alert if in alert on reboot timer.setInterval(sendAlert2Blynk, sendAlert);
   
     EEPROM.get(1, lowalertsetpoint); //since firmware 2.0 this pops to -1 on fresh device instead of set from above
     EEPROM.get(50, highalertsetpoint);
@@ -142,17 +162,21 @@ void setup() {
     Blynk.virtualWrite(V11, highalertsetpoint);
     Blynk.notify(String(Location + " Starting... Allow 1 min for sensor readings to settle")); // +  myStr + ("°F"));
     pinMode(BlynkAlertLED, OUTPUT);
+    #if Wiring_WiFi
     pinMode(PWR, INPUT); //PWR: 0=no USB power, 1=USB powered
 	pinMode(CHG, INPUT); //CHG: 0=charging, 1=not charging
+	#endif
     
     Particle.function("Debug2Particle", switchdb2p);
-    Particle.variable("Debug2Particle", db2p);
-    Particle.variable("WifiStrength", wifiSTR);
-    Particle.variable("WifiQuaility", wifiQUA);
-    Particle.variable("USBPower", hasVUSB);
-    Particle.variable("BatteryVolt", batVolt);
-    Particle.variable("BME280Ready", BME280Status);
-    Particle.variable("SCD30Ready", SCD30Status);
+    Particle.variable("1-Debug2Particle", db2p);
+    Particle.variable("2-SIGStrength", SIG_STR);
+    Particle.variable("3-SIGQuaility", SIG_QUA);
+    Particle.variable("4-DayCounter", runDayCounter);
+    Particle.variable("5-USBPower", hasVUSB);
+    Particle.variable("6-BatteryVolt", batVolt);
+    Particle.variable("7-BME280Ready", BME280Status);
+    Particle.variable("8-SCD30Ready", SCD30Status);
+    Particle.variable("9-AirQUReady", AirQUStatus);
     Particle.variable("Alert Enable", alertenable);
     Particle.variable("Low Alert", lowalertsetpoint);
     Particle.variable("High Alert", highalertsetpoint);
@@ -162,11 +186,10 @@ void setup() {
     sensorInit();
     
     lastInterval = millis();
+    updateAllSensors();
 }
 
 void loop() {
-    bool curVUSB = hasVUSB();
-    if (curVUSB != hadVUSB) { hadVUSB = curVUSB;  if(curVUSB) {pwLED.on(); /*powerRegain();*/}   else{pwLED.off(); /*powerFail();*/}   }
     if (Blynk.connected()) {  // If connected run as normal
         Blynk.run();
     } else if (ReCnctFlag == 0) {
@@ -179,21 +202,33 @@ void loop() {
         });  // END Timer Function
     } //Blynk.run();
     timer.run();
-    if (Blynk.connected() && !firstrunlockout) firstrun();
-
+    bool curVUSB = hasVUSB();
+    if (curVUSB != hadVUSB) { hadVUSB = curVUSB;  if(curVUSB) {pwLED.on(); powerRegain();}   else{pwLED.off(); powerFail();}   }
+    if (Blynk.connected() && !firstrunlockout) firstrun(); //get good sensor readings out to Blynk ASAP
+    if (Time.hour() == 3 && Time.day() != timeUpdateDay) runOnceADay();  // update time and daylight savings
     if(DustSenStatus) { duration = pulseIn(DUST_SENSOR_PIN, LOW); lowpulseoccupancy = lowpulseoccupancy + duration; }
     if (millis() - lastSync > ONE_DAY_MILLIS) { Particle.syncTime(); lastSync = millis(); }
 } //end loop
-
+void powerRegain() {
+    if(alertenable) {
+        Blynk.notify(String(Location + " Power Restored")); // +  myStr + ("°F"));
+    }
+}
+void powerFail() {
+    if(alertenable) {
+        Blynk.notify(String(Location + " Power Failure")); // +  myStr + ("°F"));
+    }
+}
 void firstrun() {
     //if (firstrunlockout == 0) { //if (millis() > FirstRunDelay && firstrunlockout == 0) {// moved into firstrun()  timer.setInterval(sendalert2blynk, sendAlert);
-    getBMEValues(temp, pressure, humidity);
+    getBMEValues(temp, pressure, humidity); //going to try putting this at the bottom of setup()
     sendinfo();
-    //timer.setInterval(sendalert2blynk, sendAlert);
+    timer.setInterval(sendAlert2Blynk, sendAlert);
     firstrunlockout = 1;
 }
 void updateAllSensors() {
     getSignalStrength();
+    getSignalQuality();
     getPowerInfo();
     if(BME280Status) getBMEValues(temp, pressure, humidity);
     if(SCD30Status) getSCDValues(tempSCD30, humiditySCD30, CO2SCD30);
@@ -211,14 +246,14 @@ void sendinfo() {
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
       Blynk.virtualWrite(V4, qual);
-      Blynk.virtualWrite(V5, wifiSTR);
+      Blynk.virtualWrite(V5, SIG_STR);
 }
 
 void sendAlert() {
     if(!havealerted && alertenable) {
         if(temp < lowalertsetpoint) {
             String myStr = String(temp);
-            Blynk.notify("Low Temp Alert-" + Location + "-" + myStr + "°F");
+            Blynk.notify("Low Temp Alert ~" + Location + "~ " + myStr + "°F");
             Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
@@ -226,7 +261,7 @@ void sendAlert() {
         }
         if(temp > highalertsetpoint) {
             String myStr = String(temp);
-            Blynk.notify("High Temp In " + Location + " " + myStr + "°F");
+            Blynk.notify("High Temp Alert ~" + Location + "~ " + myStr + "°F");
             Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
@@ -336,7 +371,7 @@ String getAirQuality() {
 
   return qual;
 }
-void getDustSensorReadings() {
+void getDustSensorReadings() { //fix SENSOR_READING_INTERVAL 
   // This particular dust sensor returns 0s often, so let's filter them out by making sure we only
   // capture and use non-zero LPO values for our calculations once we get a good reading.
   if (lowpulseoccupancy == 0) {
@@ -346,7 +381,7 @@ void getDustSensorReadings() {
     last_lpo = lowpulseoccupancy;
   }
 
-  ratio = lowpulseoccupancy / (SENSOR_READING_INTERVAL * 10.0);                   // Integer percentage 0=>100
+  //ratio = lowpulseoccupancy / (SENSOR_READING_INTERVAL * 10.0);                   // Integer percentage 0=>100
   concentration = 1.1 * pow(ratio, 3) - 3.8 * pow(ratio, 2) + 520 * ratio + 0.62; // using spec sheet curve
 
   Serial.printlnf("LPO: %d", lowpulseoccupancy);
@@ -424,9 +459,27 @@ int switchdb2p(String command) {
     }
     else return -1;
 } 
-void getSignalStrength() {
+/*void getSignalStrength() {
     wifiSTR = WiFi.RSSI().getStrength();
     wifiQUA = WiFi.RSSI().getQualityValue();
+}*/
+int getSignalStrength() {
+    #if Wiring_WiFi
+        SIG_STR = WiFi.RSSI().getStrength();
+    #endif
+    #if Wiring_Cellular
+        SIG_STR = Cellular.RSSI().getStrength();
+    #endif
+    return SIG_STR;
+}
+int getSignalQuality() {
+    #if Wiring_WiFi
+        SIG_QUA = WiFi.RSSI().getStrength();
+    #endif
+    #if Wiring_Cellular
+        SIG_QUA = Cellular.RSSI().getStrength();
+    #endif
+    return SIG_QUA;
 }
 bool hasVUSB() { //checks if power supplied at USB this runs in loop() - bool curVUSB = hasVUSB(); 
     uint32_t *pReg = (uint32_t *)0x40000438; // USBREGSTATUS
@@ -435,6 +488,7 @@ bool hasVUSB() { //checks if power supplied at USB this runs in loop() - bool cu
 }
 
 void getPowerInfo() {
+    #if Wiring_WiFi
     float voltage = analogRead(BATT) * 0.0011224;
     batVolt = String(voltage, 3); //sprintf("Voltage=%.1f", voltage);
 	char buf[128];
@@ -446,4 +500,30 @@ void getPowerInfo() {
 		strcpy(lastMsg, buf);
 		lastPublish = millis();
 	}*/
+	#endif
+}
+
+void runOnceADay() {
+    timeUpdateDay = Time.day();
+    runDayCounter++;
+    Particle.syncTime();
+    setZone();
+}
+void setZone() {
+	int month = Time.month();
+	int day = Time.day();
+	int weekday = Time.weekday();
+	int previousSunday = day - weekday + 1;
+
+	if (month < 3 || month > 11) {
+		Time.zone(-6);
+	}else if (month > 3 && month < 11) {
+		Time.zone(-5);
+	}else if (month == 3) {
+		int offset = (previousSunday >= 8)? -5 : -6;
+		Time.zone(offset);
+	} else{
+		int offset = (previousSunday <= 0)? -7 : -8;
+		Time.zone(offset);
+	}
 }
