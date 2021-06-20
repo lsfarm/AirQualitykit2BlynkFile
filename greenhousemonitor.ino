@@ -14,12 +14,14 @@ V10  - LowAlertSetPoint   EEPROM.put(1
 V11  - HighAlertSetPoint  EEPROM.put(50
 V12  - LowAlertSetPoint returned to Blynk app (Settings)
 V13  - HighAlertSetPoint returned to Blynk app (Settings)
-V20  - Temp alert disable button bool alertenable */
+V14  = HumAlert  Rising Hum Alert
+V20  - Temp alert disable button bool alertenable 
+V21  - hum alert enabled?? not used yet*/
 /////////************* **********/////////
 //         Global Variables             //
 /////////************* **********/////////
 SYSTEM_THREAD(ENABLED); //resaon for this??
-#define RedBarnTexline  //location of device
+#define Amistad  //location of device
 /**** Device Settings****************************************************************************************************************/
 //#define SENSOR_READING_INTERVAL 30  //<<< in loop()   30 = 3 sec. to discontinue this  using BlynkTimer now
 //#define FirstRunDelay 12000
@@ -30,6 +32,7 @@ long resendAlert2Blynk  = 720000L;  //720000 12min.
 bool firstrunlockout    = 0;
 int  timeUpdateDay      = 0;
 int  runDayCounter      = 0;
+int  sensorReInit       = 0;
 /**** Particle *********************************************************************************************************************/
 //moved to if def bool db2p = TRUE;  //debug2particle   >>if(db2p) {Particle.publish("in db2p");} set this to false when statified with performance to disable sending if rebooted
 int switchdb2p(String command); //particle function
@@ -42,44 +45,57 @@ int ReCnctCount;
 WidgetTerminal terminal(V8);
 //char auth[] = "Mi23GHp-MVumIsjfunxSQT_WxnutVvs1";  //Red Barn Greenhouse in Blynk
 #ifdef HomeAir
-char auth[] = "PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; 
-String Location = "HomeAir";
+//char auth[] = "LH9dWY6U3gaULoRu-x9l9pHwDJFueGWa";//PqViD5lZykvxcKA35ifjfI2MoPEKoBSF"; 
+String Location = "HomeAirTest";
 long sendInfo2Blynk     = 60000L;
 bool db2p = TRUE;
 #endif
-#ifdef Inside
-char auth[] = "OZ4chJK2VV5yEcau0yBvOjSe_j4NsKQz"; 
-String Location = "2Inside";
+#ifdef RedBarnBeth
+//WiFi.setCredentials("Dustin Nikkel", "joyousunit942");
+char auth[] = "_9XmQH9iMNDH5-MTZ-uVEcLB1nblzj4U"; //new app 
+String Location = "Red Barn Beth";
 long sendInfo2Blynk     = 60000L;
-bool db2p = TRUE;
+bool db2p = FALSE;
 #endif
 #ifdef RedBarnNorth
-char auth[] = "CcXWiH1qYe6ACneKvrXitZ_KC56Fbj5W"; 
+char auth[] = "IQZpd5NiLIa9V0Sg2ZR_A04gRQpFJpUi"; //new app
+//char auth[] = "CcXWiH1qYe6ACneKvrXitZ_KC56Fbj5W"; //old app
 String Location = "Red Barn North";
 long sendInfo2Blynk     = 60000L;
-bool db2p = TRUE;
+bool db2p = FALSE;
 #endif
 #ifdef RedBarnMain
-char auth[] = "ODmy4ksmya1Ttw_-tlv93FXaheZTdiph";
+//char auth[] = "ODmy4ksmya1Ttw_-tlv93FXaheZTdiph"; //old app
+char auth[] = "LH9dWY6U3gaULoRu-x9l9pHwDJFueGWa"; //new app
 String Location = "Red Barn Main";
 long sendInfo2Blynk     = 60000L;
-bool db2p = TRUE;
+bool db2p = FALSE;
 #endif
 #ifdef RedBarnTexline
-char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; 
+char auth[] = "ljq3ApKCHBamvyBRkO-YZADwVgoWJxhT";
+//char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; //old app
 String Location = "Red Barn Texline";
+long sendInfo2Blynk     = 600000L;
+bool db2p = FALSE;
+#endif
+#ifdef Amistad
+char auth[] = "ljq3ApKCHBamvyBRkO-YZADwVgoWJxhT";
+//char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; //old app
+String Location = "Amistad";
 long sendInfo2Blynk     = 600000L;
 bool db2p = FALSE;
 #endif
 #define BlynkAlertLED D7    //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 bool LEDstatus = 0;
 BlynkTimer timer;
-int timerNA = 99;
-int resetAlertTimer = timerNA;
-bool havealerted = 0;
-bool alertenable = 1;
-int lowalertsetpoint = 60;  //RedBarn 60   IDGreenhouse 50
-int highalertsetpoint = 105;  //RedBarn 105  IDGreenhouse 90
+int     timerNA         = 99;
+int     resetAlertTimer = timerNA;
+bool    havealerted     = 0;
+int     humhavealerted  = 0;
+bool    alertenable     = 1;
+int     lowalertsetpoint    = 60;  //RedBarn 60   IDGreenhouse 50
+int     highalertsetpoint   = 105;  //RedBarn 105  IDGreenhouse 90
+int     humalert            = 42;
 /**** PowerMonitoring *************************************************************************************************************/
 bool hasVUSB(); 
 bool hadVUSB = false;
@@ -102,13 +118,14 @@ void createSCD30Payload(int tempSCD30, int humiditySCD30, int CO2SCD30);
 
 #include <Adafruit_BME280.h>   //I2C >> 0x76(default) or 0x77  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 bool BME280Status; //set automaticlly
+bool testBME; //in readbme280() is this locking out the reading?? or is the reading actully going bad.
 Adafruit_BME280 bme;
 int temp, pressure, humidity;
 int getBMEValues(int &temp, int &humidity, int &pressure);
 void createEventPayload(int temp, int humidity, int pressure, String airQuality);
 
 #include <Grove_Air_quality_Sensor.h>
-bool AirQUStatus;  //set automaticlly
+bool AirQUStatus = 0;  //set automaticlly not working
 #define AQS_PIN A2            //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 String getAirQuality();
 AirQualitySensor aqSensor(AQS_PIN);
@@ -137,6 +154,10 @@ BLYNK_WRITE(V11) {
   highalertsetpoint = param.asInt(); // assigning incoming value from pin to a variable
   EEPROM.put(50, highalertsetpoint);
 }
+BLYNK_WRITE(V14) {
+  humalert = param.asInt(); // assigning incoming value from pin to a variable
+  EEPROM.put(100, humalert);
+}
 BLYNK_WRITE(V20) {
   alertenable = param.asInt(); // assigning incoming value from pin to a variable
   digitalWrite(BlynkAlertLED, alertenable); //turn on D7 blue LED if alert On
@@ -152,14 +173,17 @@ void setup() {
     pwLED.off();
     //sensorInit();
     timer.setInterval(updateSensors, updateAllSensors); //sendAlert() relies on this
+    delay(500);
     timer.setInterval(sendInfo2Blynk, sendinfo);
     // try this in firstRun() to get alert if in alert on reboot timer.setInterval(sendAlert2Blynk, sendAlert);
   
     EEPROM.get(1, lowalertsetpoint); //since firmware 2.0 this pops to -1 on fresh device instead of set from above
     EEPROM.get(50, highalertsetpoint);
+    EEPROM.get(100, humalert);
     Blynk.virtualWrite(V20, alertenable);
     Blynk.virtualWrite(V10, lowalertsetpoint);
     Blynk.virtualWrite(V11, highalertsetpoint);
+    Blynk.virtualWrite(V14, highalertsetpoint);
     Blynk.notify(String(Location + " Starting... Allow 1 min for sensor readings to settle")); // +  myStr + ("°F"));
     pinMode(BlynkAlertLED, OUTPUT);
     #if Wiring_WiFi
@@ -168,6 +192,7 @@ void setup() {
 	#endif
     
     Particle.function("Debug2Particle", switchdb2p);
+    Particle.function("RestartSensors", restartSensors);
     Particle.variable("1-Debug2Particle", db2p);
     Particle.variable("2-SIGStrength", SIG_STR);
     Particle.variable("3-SIGQuaility", SIG_QUA);
@@ -178,8 +203,10 @@ void setup() {
     Particle.variable("8-SCD30Ready", SCD30Status);
     Particle.variable("9-AirQUReady", AirQUStatus);
     Particle.variable("Alert Enable", alertenable);
-    Particle.variable("Low Alert", lowalertsetpoint);
-    Particle.variable("High Alert", highalertsetpoint);
+    Particle.variable("91-Low Alert", lowalertsetpoint);
+    Particle.variable("92-High Alert", highalertsetpoint);
+    Particle.variable("SensorReStart", sensorReInit);
+    Particle.variable("testBME", testBME); //used for debuging >>will delete
     //Particle.variable("firstrunlockout", firstrunlockout);
 
     Wire.begin();
@@ -210,6 +237,7 @@ void loop() {
     if (millis() - lastSync > ONE_DAY_MILLIS) { Particle.syncTime(); lastSync = millis(); }
 } //end loop
 void powerRegain() {
+    sensorInit(); //to try eliminating BME280 comunication failures
     if(alertenable) {
         Blynk.notify(String(Location + " Power Restored")); // +  myStr + ("°F"));
     }
@@ -229,7 +257,7 @@ void firstrun() {
 void updateAllSensors() {
     getSignalStrength();
     getSignalQuality();
-    getPowerInfo();
+    //getPowerInfo();
     if(BME280Status) getBMEValues(temp, pressure, humidity);
     if(SCD30Status) getSCDValues(tempSCD30, humiditySCD30, CO2SCD30);
     if(AirQUStatus) airQuality = getAirQuality(); //<<< move this out of BME280 stuff
@@ -240,13 +268,14 @@ void updateAllSensors() {
 void sendinfo() {
       // this nesicary? getBMEValues(temp, pressure, humidity); //get current readings
       if(db2p) createEventPayload(temp, humidity, pressure, airQuality); // with BME280 sensor
-      if(db2p) createSCD30Payload(tempSCD30, humiditySCD30, CO2SCD30);
-      Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
+      if(db2p && SCD30Status) createSCD30Payload(tempSCD30, humiditySCD30, CO2SCD30);
+      Blynk.virtualWrite(V0, Time.format("%r %a %m/%d")); //"%r - %a %D"
       Blynk.virtualWrite(V1, temp);
       Blynk.virtualWrite(V2, humidity);
       Blynk.virtualWrite(V3, pressure);
-      Blynk.virtualWrite(V4, qual);
+      if(AirQUStatus) Blynk.virtualWrite(V4, qual);
       Blynk.virtualWrite(V5, SIG_STR);
+      getPowerInfo(); //this gets readings and sends to particle
 }
 
 void sendAlert() {
@@ -254,7 +283,7 @@ void sendAlert() {
         if(temp < lowalertsetpoint) {
             String myStr = String(temp);
             Blynk.notify("Low Temp Alert ~" + Location + "~ " + myStr + "°F");
-            Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
+            Blynk.virtualWrite(V0, Time.format("Low Temp %r"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
             if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendAlert2Blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
@@ -262,27 +291,47 @@ void sendAlert() {
         if(temp > highalertsetpoint) {
             String myStr = String(temp);
             Blynk.notify("High Temp Alert ~" + Location + "~ " + myStr + "°F");
-            Blynk.virtualWrite(V0, Time.format("%r - %a %D"));
+            Blynk.virtualWrite(V0, Time.format("High Temp %r"));
             Blynk.virtualWrite(V1, temp);
             havealerted = 1;
             if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendAlert2Blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
         }
     }
+    if(alertenable && humhavealerted == 0) {
+        if(humidity > humalert && humhavealerted != 1) {
+            String myStr = String(humidity);
+            Blynk.notify("1st Humidity Alert ~" + Location + "~ " + myStr + "%");
+            Blynk.virtualWrite(V0, Time.format("Humidity Alert %r"));
+            Blynk.virtualWrite(V2, humidity);
+            humhavealerted = 1;
+        }
+        int nexthumalert = humalert + 5;
+        if(humidity > nexthumalert && humhavealerted != 2) {
+            String myStr = String(humidity);
+            Blynk.notify("2nd Humidity Alert ~" + Location + "~ " + myStr + "%");
+            Blynk.virtualWrite(V0, Time.format("Humidity Alert %r"));
+            Blynk.virtualWrite(V2, humidity);
+            humhavealerted = 2;    
+        }
+    }
+    int humresetalerts = humalert - 5;
+    if(humhavealerted != 0 && humidity < humresetalerts) humhavealerted = 0;
 }
 /////////************* **********/////////
 //           Sensor Functions           //
 /////////************* **********/////////
 void sensorInit() {
+    sensorReInit++;
   // Configure the dust sensor pin as an input
   pinMode(DUST_SENSOR_PIN, INPUT);
   if (aqSensor.init()) {
       //publishQueue.publish("DustSen", "Ready", PRIVATE | WITH_ACK);
     if(db2p) Particle.publish("AirQUSen", "Ready", PRIVATE | WITH_ACK); delay(1000); //if(db2p && Particle.connected()) {bool result = Particle.publish("DustSen", "Ready", PRIVATE | WITH_ACK); delay(4000);}
-    AirQUStatus = 1;
+    //AirQUStatus = 1; setting manually
   }
   else {
     if(db2p) Particle.publish("AirQUSen", "Error"); delay(1000);
-    AirQUStatus = 0;
+    //AirQUStatus = 0; setting manually
   }
   if (bme.begin()) { //BME280
       //publishQueue.publish("BME280", "Ready", PRIVATE | WITH_ACK);
@@ -338,9 +387,9 @@ int getSCDValues(int &tempSCD30, int &humiditySCD30, int &CO2SCD30) {
 }
 int getBMEValues(int &temp, int &pressure, int &humidity) {
     if(db2p) {  //if(temp < 0) Particle.publish("BME280/debug", "Error in getBMEValues()");
-        int testBME = bme.readTemperature();
-        if(testBME == 0) { BME280Status = 0; String mySTR = String(testBME); Particle.publish("BME280/debug/unplugged", mySTR, PRIVATE); } //not working
-        if(testBME != 0) BME280Status = 1;
+        int reading = bme.readTemperature();
+        if(reading == 0) { testBME = 0; /*BME280Status = 0;*/ String mySTR = String(testBME); Particle.publish("BME280/debug/unplugged", mySTR, PRIVATE); } //not working
+        if(reading != 0) testBME = 1; /*BME280Status = 1;*/
     }
     temp = (int)(bme.readTemperature() * 1.8F + 32); //convert temp to fahrenheit
     pressure = (int)(bme.readPressure() / 100.0F);
@@ -459,6 +508,13 @@ int switchdb2p(String command) {
     }
     else return -1;
 } 
+int restartSensors(String command) {
+    if(command == "1") {
+        sensorInit();
+        return 1;
+    }
+    else return -1;
+}
 /*void getSignalStrength() {
     wifiSTR = WiFi.RSSI().getStrength();
     wifiQUA = WiFi.RSSI().getQualityValue();
@@ -474,10 +530,10 @@ int getSignalStrength() {
 }
 int getSignalQuality() {
     #if Wiring_WiFi
-        SIG_QUA = WiFi.RSSI().getStrength();
+        SIG_QUA = WiFi.RSSI().getQuality();
     #endif
     #if Wiring_Cellular
-        SIG_QUA = Cellular.RSSI().getStrength();
+        SIG_QUA = Cellular.RSSI().getQuality();
     #endif
     return SIG_QUA;
 }
@@ -523,7 +579,7 @@ void setZone() {
 		int offset = (previousSunday >= 8)? -5 : -6;
 		Time.zone(offset);
 	} else{
-		int offset = (previousSunday <= 0)? -7 : -8;
+		int offset = (previousSunday <= 0)? -5 : -6;
 		Time.zone(offset);
 	}
 }
