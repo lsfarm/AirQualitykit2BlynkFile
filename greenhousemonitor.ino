@@ -65,7 +65,6 @@ long sendInfo2Blynk     = 60000L;
 bool db2p = FALSE;
 #endif
 #ifdef RedBarnMain
-//char auth[] = "ODmy4ksmya1Ttw_-tlv93FXaheZTdiph"; //old app
 char auth[] = "LH9dWY6U3gaULoRu-x9l9pHwDJFueGWa"; //new app
 String Location = "Red Barn Main";
 long sendInfo2Blynk     = 60000L;
@@ -73,14 +72,13 @@ bool db2p = FALSE;
 #endif
 #ifdef RedBarnTexline
 char auth[] = "ljq3ApKCHBamvyBRkO-YZADwVgoWJxhT";
-//char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; //old app
 String Location = "Red Barn Texline";
 long sendInfo2Blynk     = 600000L;
 bool db2p = FALSE;
 #endif
 #ifdef Amistad
-char auth[] = "ljq3ApKCHBamvyBRkO-YZADwVgoWJxhT";
-//char auth[] = "rFEtimvvXF2xc1FFpgNIeVnKE74LOkz0"; //old app
+FuelGauge fuel;
+char auth[] = "jWWNO9Ldl6PshSwBQ2EcxmHuOfrfHAlq";
 String Location = "Amistad";
 long sendInfo2Blynk     = 600000L;
 bool db2p = FALSE;
@@ -183,7 +181,7 @@ void setup() {
     Blynk.virtualWrite(V20, alertenable);
     Blynk.virtualWrite(V10, lowalertsetpoint);
     Blynk.virtualWrite(V11, highalertsetpoint);
-    Blynk.virtualWrite(V14, highalertsetpoint);
+    Blynk.virtualWrite(V14, humalert);
     Blynk.notify(String(Location + " Starting... Allow 1 min for sensor readings to settle")); // +  myStr + ("°F"));
     pinMode(BlynkAlertLED, OUTPUT);
     #if Wiring_WiFi
@@ -297,25 +295,30 @@ void sendAlert() {
             if (!timer.isEnabled(resetAlertTimer)) { resetAlertTimer = timer.setTimeout(resendAlert2Blynk, [] () {havealerted = 0; resetAlertTimer = timerNA;} ); }
         }
     }
-    if(alertenable && humhavealerted == 0) {
-        if(humidity > humalert && humhavealerted != 1) {
+    if(alertenable) {
+        if(humidity > humalert && humhavealerted == 0) {
             String myStr = String(humidity);
             Blynk.notify("1st Humidity Alert ~" + Location + "~ " + myStr + "%");
             Blynk.virtualWrite(V0, Time.format("Humidity Alert %r"));
             Blynk.virtualWrite(V2, humidity);
             humhavealerted = 1;
+            timer.setTimeout(5000L, [] () { terminal.print(Time.format("%D %I:%M%p - ")); terminal.print("1st Humidity Alert: "); terminal.println(humidity); terminal.flush();  } );
         }
         int nexthumalert = humalert + 5;
-        if(humidity > nexthumalert && humhavealerted != 2) {
+        if(humidity > nexthumalert && humhavealerted == 1) {
             String myStr = String(humidity);
             Blynk.notify("2nd Humidity Alert ~" + Location + "~ " + myStr + "%");
             Blynk.virtualWrite(V0, Time.format("Humidity Alert %r"));
             Blynk.virtualWrite(V2, humidity);
-            humhavealerted = 2;    
+            humhavealerted = 2; 
+            timer.setTimeout(5000L, [] () { terminal.print(Time.format("%D %I:%M%p - ")); terminal.print("2nd Humidity Alert: "); terminal.println(humidity); terminal.flush();  } );
         }
     }
     int humresetalerts = humalert - 5;
-    if(humhavealerted != 0 && humidity < humresetalerts) humhavealerted = 0;
+    if(humhavealerted != 0 && humidity < humresetalerts) {
+        humhavealerted = 0;
+        terminal.print(Time.format("%D %I:%M%p - ")); terminal.print("LowHumididty-AlertReset"); terminal.flush();
+    }
 }
 /////////************* **********/////////
 //           Sensor Functions           //
@@ -556,6 +559,9 @@ void getPowerInfo() {
 		strcpy(lastMsg, buf);
 		lastPublish = millis();
 	}*/
+	#endif
+	#if Wiring_Cellular
+	//batVolt = fuel.getVCell();
 	#endif
 }
 
